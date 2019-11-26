@@ -1,0 +1,50 @@
+---
+- hosts: localhost
+  become: yes 
+  gather_facts: no
+  tasks:
+  - name: "Create folder for docker file"
+    file:
+      path: /opt/dockerfiles/file-proxy-service
+      recurse: yes
+      owner: ansible
+      group: ansible
+  - name: "Copy Dockerfile to destination"
+    copy:
+      src: Dockerfile
+      dest: /opt/dockerfiles/file-proxy-service/Dockerfile
+      owner: ansible
+      group: ansible
+  - name: "Copy .env to destination"
+    copy:
+      src: .env
+      dest: /opt/dockerfiles/file-proxy-service/.env
+      owner: ansible
+      group: ansible
+  - name: "Copy requirements.txt to destination..."
+    copy: 
+      src: requirements.txt
+      dest: /opt/dockerfiles/file-proxy-service/requirements.txt
+      owner: ansible
+      group: ansible
+  - name: "Copy App.py to the destination..."
+    copy:
+      src: App.py
+      dest: /opt/dockerfiles/file-proxy-service/App.py
+      owner: ansible
+      group: ansible
+  - name: "Build image"
+    docker_image:
+      name: file-proxy-service
+      build:
+        path: /opt/dockerfiles/file-proxy-service
+      source: pull
+  - name: "Run container"
+    docker_container:
+      name: file-proxy-service
+      image: file-proxy-service
+      restart: yes
+      volumes:
+        - "/home/ansible/in:/in"
+      ports:
+        - "8080:8080"
