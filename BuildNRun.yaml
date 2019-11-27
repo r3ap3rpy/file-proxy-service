@@ -1,45 +1,87 @@
 ---
-- hosts: localhost
-  become: yes 
-  gather_facts: no
+- hosts: 2019B
+  become: no 
+  gather_facts: yes
   tasks:
-  - name: "Create folder for docker file"
+  - name: "Create folder for docker file on NOT Windows!"
     file:
+      #path: /opt/dockerfiles/file-proxy-service
       path: /opt/dockerfiles/file-proxy-service
       recurse: yes
       owner: ansible
       group: ansible
-  - name: "Copy Dockerfile to destination"
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Create folder for docker file on Windows"
+    win_file:
+      path: C:\dockerfiles\file-proxy-service
+      state: directory
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Copy Dockerfile to destination NOT Windows"
     copy:
       src: Dockerfile
       dest: /opt/dockerfiles/file-proxy-service/Dockerfile
       owner: ansible
       group: ansible
-  - name: "Copy .env to destination"
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Copy Dockerfile to destination Windows"
+    win_copy:
+      src: Dockerfile
+      dest: C:\dockerfiles\file-proxy-service\Dockerfile
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Copy .env to destination on NOT Windows."
     copy:
       src: .env
       dest: /opt/dockerfiles/file-proxy-service/.env
       owner: ansible
       group: ansible
-  - name: "Copy requirements.txt to destination..."
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Copy .env to destination on Windows!"
+    win_copy:
+      src: .env
+      dest: C:\dockerfiles\file-proxy-service\.env      
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Copy requirements.txt to destination on NOT Windows"
     copy: 
       src: requirements.txt
       dest: /opt/dockerfiles/file-proxy-service/requirements.txt
       owner: ansible
       group: ansible
-  - name: "Copy App.py to the destination..."
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Copy requirements.txt to destination  on Windows"
+    win_copy: 
+      src: requirements.txt
+      dest: C:\dockerfiles\file-proxy-service\requirements.txt      
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Copy App.py to the destination on NOT Windows!"
     copy:
       src: App.py
       dest: /opt/dockerfiles/file-proxy-service/App.py
       owner: ansible
       group: ansible
-  - name: "Build image"
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Copy App.py to the destination on Windows!"
+    win_copy:
+      src: App.py
+      dest: C:\dockerfiles\file-proxy-service\App.py
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Build image on NOT Windows"
     docker_image:
       name: file-proxy-service
       build:
         path: /opt/dockerfiles/file-proxy-service
       source: pull
-  - name: "Run container"
+      register: buildresult
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Build image on Windows"
+    win_command: docker build -t file-proxy-service .
+    args:
+      chdir: C:\dockerfiles\file-proxy-service\
+    register: buildresult
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Results of the build..."
+    debug:
+      msg: "{{buildresult}}"
+  - name: "Run container on NOT Windows"
     docker_container:
       name: file-proxy-service
       image: file-proxy-service
@@ -48,3 +90,13 @@
         - "/home/ansible/in:/in"
       ports:
         - "8080:8080"
+      register: runresult
+    when: ansible_facts['os_family'] != 'Windows'
+  - name: "Run container on Windows!"
+    win_command: 
+
+    register: runresult
+    when: ansible_facts['os_family'] == 'Windows'
+  - name: "Results of the start"
+    debug:
+      msg: "{{runresult}}"
