@@ -1,10 +1,10 @@
 import os
 import json
-import zlib
 import zipfile
 import base64
 import paramiko
 import winrm
+import smtplib
 from datetime import datetime
 from flask import Flask
 from flask_apscheduler import APScheduler
@@ -50,27 +50,26 @@ if os.getenv('REMOTESERVER') and os.getenv('REMOTEUSER') and os.getenv('REMOTEPA
     RemoteDestination = True
     print(f"Verifying ssh authentication and remote path: {os.getenv('OUT')} on system: {os.getenv('REMOTESERVER')}")
     try:
-        #ssh = paramiko.SSHClient() 
-        #ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy()) 
-        #ssh.connect(os.getenv('REMOTESERVER'), username=os.getenv('REMOTEUSER'), password=os.getenv('REMOTEPASS'))      
-        #dircheck = """ 
-        #if [ -d "%s" ]; then          
-        #  echo "True"
-        #else
-        #  echo "False"
-        #fi
-        #"""  % (os.getenv('OUT'))        
-        #stdin, stdout, stderr = ssh.exec_command(dircheck)
-        #output = stdout.readlines()
-        #ssh.close()
-        #if len(output) == 0:
-        #    raise SystemExit("Unknown error!")
-        #elif output[0].replace('\n','') == 'True':
-        #    print("Good to go, remote path exists, and credentials are working!")
-        #    RemoteCopy = 'ssh'
-        #else:
-        #    raise SystemExit("The remote path does not exists on the system...")
-        ...
+        ssh = paramiko.SSHClient() 
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy()) 
+        ssh.connect(os.getenv('REMOTESERVER'), username=os.getenv('REMOTEUSER'), password=os.getenv('REMOTEPASS'),timeout = 2)      
+        dircheck = """ 
+        if [ -d "%s" ]; then          
+          echo "True"
+        else
+          echo "False"
+        fi
+        """  % (os.getenv('OUT'))        
+        stdin, stdout, stderr = ssh.exec_command(dircheck)
+        output = stdout.readlines()
+        ssh.close()
+        if len(output) == 0:
+            raise SystemExit("Unknown error!")
+        elif output[0].replace('\n','') == 'True':
+            print("Good to go, remote path exists, and credentials are working!")
+            RemoteCopy = 'ssh'
+        else:
+            raise SystemExit("The remote path does not exists on the system...")        
     except Exception as e:
         print(f"SSH connection failed, trying winrm for windows because: {e}")
         if '@' in os.getenv('REMOTEUSER'):
@@ -125,7 +124,7 @@ def copyproxy():
             with zipfile.ZipFile(gzipFile, mode = 'w', compression = zipfile.ZIP_DEFLATED) as myzip:
                 myzip.write(inputFile,file)
                 try: 
-                    compress_ratio = 'Compressed: %d%%' % (100.0 *  ((float(os.stat(inputFile).st_size) - float(os.stat(gzipFile).st_size) / float(os.stat(inputFile).st_size))))
+                    compress_ratio = 'Compressed: %d%%' % (100.0 *  (((float(os.stat(inputFile).st_size) - float(os.stat(gzipFile).st_size)) / float(os.stat(inputFile).st_size))))
                     print(compress_ratio)
                 except ZeroDivisionError as e:
                     print(f"Empty files cennot be compressed, because:{e} skipping...")
@@ -133,11 +132,12 @@ def copyproxy():
 
             if RemoteDestination:
                 print(f"Pushing file to remote server: {os.getenv('REMOTESERVER')}")
-                #gzipFile = (file.split('/')[-1].split('.')[0] + '.gzip')
-                #with open(gzipFile,'wb') as result:
-                #    result.write(compressed)                
+
                 def chunker(seq, size):
                     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+                Statz = {}
+
                 if RemoteCopy == 'ssh':
                     ssh = paramiko.SSHClient() 
                     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy()) 
@@ -155,7 +155,8 @@ def copyproxy():
                         Response = Session.run_ps(f"'{chunk}' | Out-File -FilePath '{os.getenv('OUT')}\\{gzipFile}.tmp' -Append -NoNewLine")                        
                         
                     Response = Session.run_ps(f"[System.Convert]::FromBase64String((Get-Content '{os.getenv('OUT')}\\{gzipFile}.tmp'))| set-content '{os.getenv('OUT')}\\{gzipFile}' -encoding byte;Remove-Item -Path '{os.getenv('OUT')}\\{gzipFile}.tmp' -Force")
-
+                    
+                    Statz = {'IN':inputFile,'OUT':(os.getenv('OUT') + ('\\' if '\\' in os.getenv('OUT') else '/') + gzipFile),'Ratio':compress_ratio}
                 else:
                     prot = winrm.protocol.Protocol(
                             endpoint = f"http://{os.getenv('REMOTESERVER')}:5985/wsman",
@@ -177,17 +178,21 @@ def copyproxy():
                     command = prot.run_command(shell, f"""powershell -c "[System.Convert]::FromBase64String((Get-Content '{os.getenv('OUT')}\\{gzipFile}.tmp'))| set-content '{os.getenv('OUT')}\\{gzipFile}' -encoding byte;Remove-Item -Path '{os.getenv('OUT')}\\{gzipFile}.tmp' -Force" """)
                     out, err, status = prot.get_command_output(shell, command)
                     prot.cleanup_command(shell, command)
-                    prot.close_shell(shell)
-                os.remove(gzipFile)
-                os.remove(inputFile)
-                RunningStats[str(datetime.now())] = {'IN':inputFile,'OUT':(os.getenv('REMOTESERVER') + "::" + (os.getenv('OUT')+(os.getenv('OUT') + ('\\' if '\\' in os.getenv('OUT') else '/') + gzipFile))),'Ratio':compress_ratio}
-            else:
-                print(f"Pushing device to output location: {os.path.sep.join([os.getenv('OUT'),(file.split('.')[0] + '.gzip')])}")
-                outputFile = os.path.sep.join([os.getenv('OUT'),(file.split('/')[-1].split('/')[-1].split('.')[0] + '.gzip')])
+                    prot.close_shell(shell)                                
+                    Statz = {'IN':inputFile,'OUT':(os.getenv('REMOTESERVER') + "::" + ((os.getenv('OUT') + ('\\' if '\\' in os.getenv('OUT') else '/') + gzipFile))),'Ratio':compress_ratio}
+            else:                
+                outputFile = os.path.sep.join([os.getenv('OUT'),(file.split('/')[-1].split('/')[-1].split('.')[0] + '.zip')])
+                print(f"Pushing device to output location: {outputFile}")
                 with open(outputFile,'wb') as result:
-                    result.write(compressed)
-                os.remove(inputFile)
-                RunningStats[str(datetime.now())] = {'IN':inputFile,'OUT':(os.getenv('OUT')+(os.getenv('OUT') + ('\\' if '\\' in os.getenv('OUT') else '/') + gzipFile)),'Date':str(datetime.now()),'Ratio':compress_ratio}
+                    with open(gzipFile,'rb') as zipped:
+                        result.write(zipped.read())
+
+                RunningStats[str(datetime.now())] = {'IN':inputFile,'OUT':(os.getenv('OUT') + ('\\' if '\\' in os.getenv('OUT') else '/') + gzipFile),'Date':str(datetime.now()),'Ratio':compress_ratio}
+            RunningStats[str(datetime.now())] = Statz
+            os.remove(inputFile)
+            os.remove(gzipFile)
+            with smtplib.SMTP(os.getenv('SMTPSERVER'), 25) as server:
+                server.sendmail(os.getenv('SMTPSENDER'),os.getenv('SMTPRECIPIENTS'),f"Subject: News files delivered\r\n{str(Statz)}")
     
     else:
         print("Dryrun, nothing to do!")

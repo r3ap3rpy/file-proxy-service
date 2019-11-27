@@ -1,11 +1,13 @@
 ---
-- hosts: 2019B
+- hosts: localhost
   become: no 
   gather_facts: yes
   tasks:
+  - name:
+    debug:
+      msg: "{{lookup('ini','REMOTEUSER section=Appconfig file=.env')}}"
   - name: "Create folder for docker file on NOT Windows!"
     file:
-      #path: /opt/dockerfiles/file-proxy-service
       path: /opt/dockerfiles/file-proxy-service
       recurse: yes
       owner: ansible
@@ -69,9 +71,14 @@
       name: file-proxy-service
       build:
         path: /opt/dockerfiles/file-proxy-service
-      source: pull
-      register: buildresult
+        pull: true
+      force_source: true
+      source: build
+    register: buildresult
     when: ansible_facts['os_family'] != 'Windows'
+  - name: "Results of the build..."
+    debug:
+      msg: "{{buildresult}}"    
   - name: "Build image on Windows"
     win_command: docker build -t file-proxy-service .
     args:
@@ -85,18 +92,23 @@
     docker_container:
       name: file-proxy-service
       image: file-proxy-service
+      state: started
       restart: yes
       volumes:
-        - "/home/ansible/in:/in"
+        - "{{lookup('ini','IN section=Appconfig file=.env')}}:/mnt/in"        
+        #- "{{lookup('ini','OUT section=Appconfig file=.env')}}:/mnt/out"
       ports:
         - "8080:8080"
-      register: runresult
+    register: runresult
     when: ansible_facts['os_family'] != 'Windows'
+  - name: "Results of the start"
+    debug:
+      msg: "{{runresult}}"    
   - name: "Run container on Windows!"
-    win_command: 
-
+    win_command: docker run -v  -p 8080:8080 -d file-proxy-service
     register: runresult
     when: ansible_facts['os_family'] == 'Windows'
   - name: "Results of the start"
     debug:
       msg: "{{runresult}}"
+  
